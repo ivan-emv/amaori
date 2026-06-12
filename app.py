@@ -1,3 +1,4 @@
+import math
 import random
 from typing import List
 
@@ -14,6 +15,9 @@ from modules.study_material import generate_study_material
 from modules.utils import AVAILABLE_MODELS, DEFAULT_MODEL, estimate_auto_questions, get_secret_or_env, index_to_letter, letter_to_index
 
 st.set_page_config(page_title="Estudio Inteligente IA", page_icon="📚", layout="wide")
+
+# Configuración interna: se oculta al usuario final para simplificar la experiencia.
+INTERNAL_MAX_CHARS = 10000
 
 
 def init_state():
@@ -96,15 +100,13 @@ def sidebar_config():
         model = st.selectbox("Modelo", AVAILABLE_MODELS, index=AVAILABLE_MODELS.index(DEFAULT_MODEL))
         level = st.selectbox("Nivel", ["Básico", "Intermedio", "Avanzado", "Experto"], index=2)
         mode = st.selectbox("Modo de procesamiento", ["Automático", "Cuestionario existente", "Generar contenido IA"], index=0)
-        max_chars = st.slider("Tamaño de bloque", 3000, 12000, 6500, 500)
-
         st.divider()
         st.header("📝 Preguntas")
         q_mode = st.radio("Cantidad", ["Automático", "Personalizado"], horizontal=True)
-        total_q = st.slider("Preguntas a generar", 5, 200, 30, 5, disabled=(q_mode == "Automático"))
-        questions_per_chunk = st.slider("Preguntas por bloque", 1, 8, 4, 1)
+        total_q = 30
+        if q_mode == "Personalizado":
+            total_q = st.slider("Preguntas a generar", 5, 200, 30, 5)
         quiz_size = st.slider("Preguntas por test", 5, 100, 20, 5)
-        st.session_state.seed = st.number_input("Semilla", value=int(st.session_state.seed), step=1)
 
         if clear:
             clear_document()
@@ -129,10 +131,10 @@ def sidebar_config():
                     except Exception as e:
                         st.error(f"No se pudo descargar: {e}")
 
-        return model, level, mode, max_chars, q_mode, total_q, questions_per_chunk, quiz_size
+        return model, level, mode, q_mode, total_q, quiz_size
 
 
-def page_document(model, level, mode, max_chars, q_mode, total_q, questions_per_chunk, quiz_size):
+def page_document(model, level, mode, q_mode, total_q, quiz_size):
     st.title("📚 Estudio Inteligente IA")
 
     if not get_secret_or_env("OPENAI_API_KEY", ""):
@@ -149,7 +151,7 @@ def page_document(model, level, mode, max_chars, q_mode, total_q, questions_per_
                     st.session_state.file_bytes,
                     st.session_state.filename,
                     st.session_state.source_label,
-                    max_chars=max_chars,
+                    max_chars=INTERNAL_MAX_CHARS,
                 )
             except Exception as e:
                 st.error(f"No se pudo procesar el documento: {e}")
@@ -159,6 +161,7 @@ def page_document(model, level, mode, max_chars, q_mode, total_q, questions_per_
     total_chars = len(kb.full_text)
     auto_q = estimate_auto_questions(total_chars, len(kb.pages))
     selected_total_q = auto_q if q_mode == "Automático" else int(total_q)
+    auto_questions_per_chunk = max(2, min(8, math.ceil(selected_total_q / max(1, len(kb.chunks)))))
 
     col_a, col_b, col_c, col_d = st.columns(4)
     col_a.metric("Páginas", len(kb.pages))
@@ -192,7 +195,7 @@ def page_document(model, level, mode, max_chars, q_mode, total_q, questions_per_
         st.subheader("📝 Banco de preguntas")
         if st.button("Generar banco de preguntas", type="primary", use_container_width=True):
             with st.spinner("Generando preguntas y equilibrando respuestas correctas..."):
-                st.session_state.questions = generate_questions(kb, model, int(selected_total_q), level, kb.detected_type, int(questions_per_chunk))
+                st.session_state.questions = generate_questions(kb, model, int(selected_total_q), level, kb.detected_type, int(auto_questions_per_chunk))
                 st.session_state.quiz = []
                 st.session_state.quiz_answers = {}
         questions = st.session_state.questions
@@ -233,7 +236,7 @@ def page_document(model, level, mode, max_chars, q_mode, total_q, questions_per_
             with col1:
                 if st.button("Crear test", type="primary", use_container_width=True):
                     pool = st.session_state.questions[:]
-                    random.Random(int(st.session_state.seed)).shuffle(pool)
+                    random.shuffle(pool)
                     st.session_state.quiz = pool[: min(len(pool), int(quiz_size))]
                     st.session_state.quiz_answers = {}
                     st.rerun()
